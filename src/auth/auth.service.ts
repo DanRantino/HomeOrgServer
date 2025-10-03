@@ -3,10 +3,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { randomInt } from 'crypto';
+import { MailerService } from '../mailer/mailer.service';
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService, private readonly jwt: JwtService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwt: JwtService,
+    private readonly mail: MailerService,
+  ) {}
 
   async register(name: string, email: string, password: string) {
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -31,7 +36,60 @@ export class AuthService {
       data: { otpCode: otp, otpExpiry },
     });
 
-    const payload = { sub: user.id, email: user.email };
-    return { access_token: this.jwt.sign(payload) };
+    await this.mail.sendOtpEmail([user.email], otp);
+
+    return { message: 'OTP enviado para o email' };
+  }
+
+  async verifyOtp(email: string, otp: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) return { error: 'Usuário não encontrado' };
+    if (user.otpCode !== otp) return { error: 'OTP inválido' };
+    if (user.otpExpiry && user.otpExpiry < new Date())
+      return { error: 'OTP expirado' };
+    const token = this.jwt.sign({ sub: user.id, email: user.email });
+    const refreshToken = this.jwt.sign(
+      { sub: user.id, email: user.email },
+      { expiresIn: '7d' },
+    );
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { otpCode: null, otpExpiry: null },
+    });
+    return {
+      access_token: token,
+      refresh_token: refreshToken,
+      refreshTokenExpiry: 7 * 24 * 60 * 60,
+    };
+  }
+
+  async refreshToken(refreshToken: string) {
+    try {
+      const payload = this.jwt.verify<{ sub: string }>(refreshToken);
+      const user = await this.prisma.user.findUnique({
+        where: { id: payload.sub },
+      });
+      if (!user) return { error: 'Usuário não encontrado' };
+      const newToken = this.jwt.sign({ sub: user.id, email: user.email });
+      const newRefreshToken = this.jwt.sign(
+        { sub: user.id, email: user.email },
+        { expiresIn: '7d' },
+      );
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          refreshToken: newRefreshToken,
+          refreshTokenExpiry: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        },
+      });
+      return {
+        access_token: newToken,
+        refresh_token: newRefreshToken,
+        refreshTokenExpiry: 7 * 24 * 60 * 60,
+      };
+    } catch {
+      return { error: 'Refresh token inválido ou expirado' };
+    }
   }
 }
+

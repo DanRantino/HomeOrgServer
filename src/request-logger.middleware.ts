@@ -7,7 +7,7 @@ export function requestLogger(req: Request, res: Response, next: NextFunction) {
   req.headers['x-request-id'] = requestId;
 
   const { method, originalUrl, body } = req;
-  console.log("🚀 ~ requestLogger ~ req:", req)
+
   const start = Date.now();
 
   // Log da entrada

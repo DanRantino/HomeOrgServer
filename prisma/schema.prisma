@@ -20,4 +20,6 @@ model User {
   isVerified   Boolean  @default(false)
   otpCode      String?  // para verificar email
   otpExpiry    DateTime? // para verificar email
+  refreshToken String?
+  refreshTokenExpiry DateTime?
 }
